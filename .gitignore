@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+
+# Docker volumes
+clickhouse_data/
+data/
+logs/
+
+
+# Environment
+.env
+*.env
+
+# Others
+*.log
+*.db
+*.sqlite3

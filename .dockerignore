@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+clickhouse_data/
+tests/
+.git/
+.gitignore
+.env

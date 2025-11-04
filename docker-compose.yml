@@ -1,0 +1,119 @@
+version: "3.9"
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.7
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/sql/clickhouse_init.sql:/docker-entrypoint-initdb.d/clickhouse_init.sql
+    healthcheck:
+      test: [ "CMD", "clickhouse-client", "--query", "SELECT 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+        - app_net
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr 0.0.0.0:8082
+      - --advertise-pandaproxy-addr localhost:8082
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    healthcheck:
+      test: [ "CMD", "rpk", "cluster", "info", "--brokers=localhost:9092" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+        - app_net
+
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ingest
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - app_net
+    volumes:
+      - .:/app
+    command: ["python", "-m", "src.websocket.ingest"]
+
+  snapshot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: snapshot
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      ingest:
+        condition: service_started
+    networks:
+      - app_net
+    volumes:
+      - .:/app
+    command: ["python", "-m", "src.orderbook.orderbook_snapshot"]
+
+  signal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: signal_generator
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      ingest:
+        condition: service_started
+    environment:
+      REDPANDA_BROKER: redpanda:9092
+      REDPANDA_TOPIC: ticks
+    networks:
+      - app_net
+    volumes:
+      - .:/app
+    command: [ "python", "-m", "src.signal.signal_generator" ]
+
+
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_TLS_ENABLED: "false"
+      KAFKA_SASL_ENABLED: "false"
+      CONNECT_ENABLED: "false"
+      CONSOLE_LISTEN_ADDRESS: 0.0.0.0:8080
+      REDPANDA_ADMIN_API_ENABLED: "true"
+      REDPANDA_ADMIN_API_URLS: http://redpanda:9644
+    depends_on:
+      - redpanda
+    networks:
+      - default
+
+volumes:
+  clickhouse_data:
