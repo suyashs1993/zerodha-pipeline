@@ -9,17 +9,16 @@ and generates signals. The focus is on handling high throughput with low process
 ## Installation and Setup
 
 1. Clone this repository to your System
-2. Install docker in your system if not already
+2. Install docker in your system
 3. Generate access token using your Api key for Kite Connect.
-4. Tech stack used in this project includes Kite-Connect SDK for consuming zerodha websocket API, **Redpanda**, **Clickhouse** and version of Python 3.8 or higher
+4. Tech stack used in this project includes Kite-Connect SDK for consuming zerodha websocket API, **Redpanda**, **Clickhouse** and version of Python 3.8 or higher. 
 All of this can be set up by running the docker with command  "docker-compose up -d --build"
                 
 5. Running it brings all the services up . Check if a database is created with name **zerodhadata** in Clickhouse DB.
 
 6. Clickhouse DB runs at localhost:8123. You can query it in following way "http://localhost:8123/?query=SHOW+DATABASES"
     This database and all the tables in it are created with a sql script with path src/clickhouse/sql/clickhouse_init.sql
-    which runs at startup 
-
+    which runs at startup
 7.  As the services are running we can view the log for ingest service that processes the incoming ticks by command
 "docker-compose logs -f ingest "
 
@@ -129,9 +128,9 @@ This is done because, writes are quiet fast in Clickhouse so there is very littl
 batch size while initialising the producer. So this means less to and fro network calls for sending the whole data.
 
 Areas of Improvement
-1. Not fault tolerant. We are maintaining an inmemory queue initially.
+1. Not fault tolerant. We are maintaining an in-memory queue initially.
 
-Orderbook_Snapshot Service
+Orderbook Snapshot Service
 
 1. Consumes from the topic and maintains a in-memory buffer- a dictionary containing the order book data for a given instrument(key)
 2. Calculates the order book metrics while processing the tick data in a loop and after a second
@@ -149,13 +148,13 @@ Signal Service
 Areas of Improvement
 1. The setup for streaming the signals is there but graphana dashboard or frontend will be suitable for visualization.
 
-Query_Utils
+Query Utils
 1. Function for fetching tick data for an instrument within a given time range.
 2. Function for generating candle (OHLCV) 1m , 5m windows.
 3. Function for retrieving order book data for an instrument within given time range
 
 
-Tables 
+## Tables ##
 
 ticks_raw  - Stores the tick data (excluding depth)
 
@@ -203,7 +202,7 @@ The tables for OHLCV for 1 and 5m  also have materialized views for them so that
 generating tables is clickhouse_init.sql as mentioned before. It runs at startup time if you start through Docker
 
 
-BenchMarks
+## BenchMarks ##
 
 1. Incoming tick data - (Processing latency < 50 ms, Compression > 50% as LZ4 compression 
 in Clickhouse is enabled by default)
@@ -214,6 +213,7 @@ token. Candle window tables are also fast as they are using materialized views
 
 
 
+   
 
 
 
@@ -271,33 +271,3 @@ token. Candle window tables are also fast as they are using materialized views
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-┌────────────────────────────┐
-│ asyncio event loop         │
-└────────────────────────────┘
-        │
-        ▼
-await tick_queue.get()  ← waits for next tick
-        │
-        ▼
-Batch full → launch insert
-        │
-        ├─► (background thread) insert_ticks(batch)
-        │
-        ├─► meanwhile: sends messages to Redpanda
-        │
-        ▼
-loop continues (no blocking)

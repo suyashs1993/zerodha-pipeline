@@ -90,12 +90,16 @@ def get_candles_1m(instrument_token: int,
     end = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
     query = f"""
-        SELECT bucket, instrument_token, open, high, low, close, volume
+        SELECT bucket, instrument_token, argMinMerge(open)open,
+            maxMerge(high)high,
+            minMerge(low) low,
+            argMaxMerge(close)close,
+            sumMerge(volume)volume 
         FROM candles_1m
         WHERE instrument_token = {instrument_token}
          AND  bucket BETWEEN toDateTime64('{start}', 6, 'UTC')
         AND toDateTime64('{end}', 6, 'UTC')
-        ORDER BY bucket ASC
+        GROUP BY bucket, instrument_token
     """
     
     result = client.query(query)
@@ -130,13 +134,17 @@ def get_candles_5m(instrument_token: int,
     end = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
     query = f"""
-        SELECT bucket_5m, instrument_token, open, high, low, close, volume
-        FROM candles_5m
-        WHERE instrument_token = {instrument_token}
-         AND  bucket_5m BETWEEN toDateTime64('{start}', 6, 'UTC')
-        AND toDateTime64('{end}', 6, 'UTC')
-        ORDER BY bucket_5m ASC
-    """
+          SELECT bucket_5m, instrument_token, argMinMerge(open)open,
+              maxMerge(high)high,
+              minMerge(low) low,
+              argMaxMerge(close)close,
+              sumMerge(volume)volume 
+          FROM candles_5m
+          WHERE instrument_token = {instrument_token}
+           AND  bucket_5m BETWEEN toDateTime64('{start}', 6, 'UTC')
+          AND toDateTime64('{end}', 6, 'UTC')
+          GROUP BY bucket_5m, instrument_token
+      """
 
     result = client.query(query)
     df = pd.DataFrame(result.result_rows, columns=result.column_names)
