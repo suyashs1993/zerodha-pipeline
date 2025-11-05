@@ -24,9 +24,6 @@ tick_queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 producer: AIOKafkaProducer | None = None
 
 
-# ----------------------------
-# WebSocket callbacks
-# ----------------------------
 def build_instrument_tokens():
     kite = KiteConnect(KITE_API_KEY)
     kite.set_access_token(KITE_ACCESS_TOKEN)
@@ -46,6 +43,11 @@ def build_instrument_tokens():
         logging.warning("Only %d symbols resolved to tokens; expected at least 100.", len(tokens))
     return tokens
 
+
+# ----------------------------
+# WebSocket callbacks
+# ----------------------------
+
 def on_connect(ws, response):
     logging.info("✅ Connected to Kite WebSocket. Subscribing...")
     tokens = build_instrument_tokens()  # Example tokens
@@ -54,6 +56,7 @@ def on_connect(ws, response):
 
 
 def on_ticks(ws, ticks):
+    logging.debug("Ticks: {}".format(ticks))
     for tick in ticks:
         tick_data = {
             "ts": datetime.now(UTC).isoformat(),
@@ -75,6 +78,23 @@ def on_close(ws, code, reason):
     logging.info(f"❌ WebSocket closed: {code}, {reason}")
 
 
+# Callback when connection closed with error.
+def on_error(ws, code, reason):
+    logging.error("Connection error: {code} - {reason}".format(code=code, reason=reason))
+
+
+# Callback when reconnect is on progress
+def on_reconnect(ws, attempts_count):
+    logging.info("Reconnecting: {}".format(attempts_count))
+
+
+# Callback when all reconnect failed (exhausted max retries)
+def on_noreconnect(ws):
+    logging.error("Reconnect failed, stopping the connection.")
+    if producer:
+        producer.stop()
+
+
 # ----------------------------
 # Tick processor
 # ----------------------------
@@ -88,21 +108,22 @@ async def process_ticks():
         batch.append(tick)
 
         if len(batch) >= BATCH_SIZE:
-            start_time = datetime.now()
+
             try:
+                start = datetime.now()
                 logging.info(f"🚀 Inserting {len(batch)} ticks into ClickHouse...")
-                insert_ticks(batch)
+                await asyncio.to_thread(insert_ticks, batch)
                 logging.info("✅ ClickHouse insert successful.")
                 # Publish to Redpanda (Kafka compatible)
-                for t in batch:
-                    await producer.send(REDPANDA_TOPIC, json.dumps(t).encode("utf-8"))
-                await producer.flush()  # ensure delivery
-
-                elapsed = (datetime.now() - start_time).total_seconds()
-
-                logging.info(
-                    f"✅ Batch processed — {len(batch)} ticks sent to Redpanda in {elapsed:.2f}s."
-                )
+                publish_tasks = [
+                    producer.send(REDPANDA_TOPIC, json.dumps(t).encode("utf-8"))
+                    for t in batch
+                ]
+                await asyncio.gather(*publish_tasks)
+                await producer.flush()
+                elapsed = (datetime.now() - start).total_seconds()
+                logging.info(f"🚀 Batch of {len(batch)} processed + sent in {elapsed:.3f}s")
+                batch.clear()
             except Exception as e:
                 logging.exception(f"❌ Error processing batch: {e}")
             finally:
@@ -114,6 +135,7 @@ async def process_ticks():
 # Main orchestrator
 # ----------------------------
 async def main():
+
     global producer
 
     logging.info(f"🚀 Initializing Redpanda producer → {REDPANDA_BROKER}")
@@ -122,10 +144,15 @@ async def main():
 
     asyncio.create_task(process_ticks())
 
+    logging.info(f" batch size {BATCH_SIZE}")
     kws = KiteTicker(KITE_API_KEY, KITE_ACCESS_TOKEN)
+
     kws.on_connect = on_connect
     kws.on_ticks = on_ticks
     kws.on_close = on_close
+    kws.on_error = on_error
+    kws.on_reconnect = on_reconnect
+    kws.on_noreconnect = on_noreconnect
 
     logging.info("🔌 Connecting to Zerodha WebSocket...")
     kws.connect(threaded=True)

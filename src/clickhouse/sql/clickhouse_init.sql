@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS ticks_raw (
         ENGINE = MergeTree()
         PARTITION BY toYYYYMMDD(ts)
         ORDER BY (instrument_token, ts)
-        TTL toDateTime(ts) + INTERVAL 90 DAY
+        TTL toDateTime(ts) + INTERVAL 30 DAY
         SETTINGS index_granularity = 8192;
 
 SET allow_experimental_object_type = 1;
@@ -33,20 +33,20 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshot (
         ENGINE = MergeTree()
         PARTITION BY toYYYYMMDD(ts)
         ORDER BY (instrument_token, ts)
-        TTL toDateTime(ts) + INTERVAL 7 DAY
+        TTL toDateTime(ts) + INTERVAL 30 DAY
         SETTINGS index_granularity = 8192;
 
 
  CREATE TABLE IF NOT EXISTS candles_1m (
-            bucket DateTime('UTC'),
+            bucket DateTime64(6, 'UTC'),
             instrument_token UInt64,
-            open Float64,
-            high Float64,
-            low Float64,
-            close Float64,
-            volume UInt64
+            open AggregateFunction(argMin, Float64, DateTime64(6, 'UTC')),
+            high AggregateFunction(max, Float64),
+            low AggregateFunction(min, Float64),
+            close AggregateFunction(argMax, Float64, DateTime64(6, 'UTC')),
+            volume AggregateFunction(sum, UInt64),
         )
-        ENGINE = ReplacingMergeTree()
+        ENGINE = AggregatingMergeTree()
         PARTITION BY toYYYYMMDD(bucket)
         ORDER BY (instrument_token, bucket);
 
@@ -56,26 +56,28 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshot (
         SELECT
             toStartOfMinute(ts) AS bucket,
             instrument_token,
-            argMin(last_price, ts) AS open,
-            max(last_price) AS high,
-            min(last_price) AS low,
-            argMax(last_price, ts) AS close,
-            sum(volume) AS volume
+            argMinState(last_price, ts) AS open,
+            maxState(last_price) AS high,
+            minState(last_price) AS low,
+            argMaxState(last_price, ts) AS close,
+            sumState(volume) AS volume
         FROM ticks_raw
         GROUP BY instrument_token, bucket;
 
+
+
  CREATE TABLE IF NOT EXISTS candles_5m (
-            bucket DateTime('UTC'),
+            bucket_5m DateTime64(6, 'UTC'),
             instrument_token UInt64,
-            open Float64,
-            high Float64,
-            low Float64,
-            close Float64,
-            volume UInt64
+            open AggregateFunction(argMin, Float64, DateTime64(6, 'UTC')),
+            high AggregateFunction(max, Float64),
+            low AggregateFunction(min, Float64),
+            close AggregateFunction(argMax, Float64, DateTime64(6, 'UTC')),
+            volume AggregateFunction(sum, UInt64),
         )
-        ENGINE = ReplacingMergeTree()
-        PARTITION BY toYYYYMMDD(bucket)
-        ORDER BY (instrument_token, bucket);
+        ENGINE = AggregatingMergeTree()
+        PARTITION BY toYYYYMMDD(bucket_5m)
+        ORDER BY (instrument_token, bucket_5m);
 
 
 
@@ -83,13 +85,13 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshot (
         TO candles_5m
         AS
         SELECT
-            toStartOfInterval(bucket, INTERVAL 5 MINUTE) AS bucket_5m,
+            toStartOfInterval(ts, INTERVAL 5 MINUTE) AS bucket_5m,
             instrument_token,
-            argMin(open, bucket) AS open,
-            max(high) AS high,
-            min(low) AS low,
-            argMax(close, bucket) AS close,
-            sum(volume) AS volume
-        FROM candles_1m
+            argMinState(last_price, ts) AS open,
+            maxState(last_price) AS high,
+            minState(last_price) AS low,
+            argMaxState(last_price, ts) AS close,
+            sumState(volume) AS volume
+        FROM ticks_raw
         GROUP BY instrument_token, bucket_5m;
 

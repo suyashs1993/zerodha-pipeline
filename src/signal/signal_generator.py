@@ -12,7 +12,7 @@ import logging
 from aiokafka import AIOKafkaConsumer
 import datetime
 
-OUTPUT_FILE = os.getenv("OUTPUT_FILE")
+
 
 # --- Logging Setup (with ms precision) ---
 logging.basicConfig(
@@ -23,12 +23,7 @@ logging.basicConfig(
 
 REDPANDA_BROKER = os.getenv("REDPANDA_BROKER", "redpanda:9092")
 REDPANDA_TOPIC = os.getenv("REDPANDA_TOPIC", "ticks")
-
-# --- Validate env vars ---
-if not REDPANDA_BROKER:
-    logging.error("❌ REDPANDA_BROKER not set in environment!")
-if not REDPANDA_TOPIC:
-    logging.error("❌ REDPANDA_TOPIC not set in environment!")
+OUTPUT_FILE = os.getenv("OUTPUT_FILE")
 
 
 async def generate_signals():
@@ -55,9 +50,17 @@ async def generate_signals():
         async for msg in consumer:
             tick = json.loads(msg.value.decode())
             token = tick.get("instrument_token")
-            bid_qty = tick.get("buy_qty")
-            ask_qty = tick.get("sell_qty")
-            logging.info(f" bid qty {bid_qty} ask_qty {ask_qty}")
+            depth_raw = tick.get("depth")
+            if depth_raw is None or depth_raw == "null":
+                continue
+
+            depth = json.loads(depth_raw)
+            bids = depth.get("buy", [])
+            asks = depth.get("sell", [])
+            if not bids or not asks:
+                continue
+            bid_qty = sum(b["quantity"] for b in bids)
+            ask_qty = sum(a["quantity"] for a in asks)
             if bid_qty + ask_qty == 0:
                 continue
             signal = generate_signal(token, bid_qty, ask_qty)
@@ -84,10 +87,6 @@ def generate_signal(token: int, bid_qty: int, ask_qty: int) -> Dict:
             signal_type = "NEUTRAL"
             confidence = abs(imbalance_ratio) / 0.3  # low-confidence neutral
 
-        # # --- Only emit if changed from previous ---
-        # prev_sig = self.prev_signal.get(token, "NEUTRAL")
-        # self.prev_signal[token] = signal_type
-
         # --- Compose signal record ---
         signal = {
             "timestamp":datetime.datetime.now(datetime.UTC).isoformat(timespec="microseconds"),
@@ -112,6 +111,8 @@ def write_signal(signal: dict, file_path: str):
 
     except Exception as e:
         print(f"⚠️ Error writing signal to file: {e}")
+
+
 
 if __name__ == "__main__":
     logging.info("📡 Signal generation started")

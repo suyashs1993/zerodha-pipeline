@@ -33,15 +33,7 @@ def get_ticks(instrument_token: int,
               limit: int = None) -> pd.DataFrame:
     """
     Fetch raw tick data for a given instrument within a time range from ClickHouse.
-    
-    Args:
-        instrument_token: The instrument token to query
-        start_time: Start of time range (datetime UTC)
-        end_time: End of time range (datetime UTC)
-        limit: Optional limit on number of rows returned
-    
-    Returns:
-        DataFrame with columns: ts, instrument_token, avg_traded_price, last_price, volume, buy_qty, sell_qty
+
     """
     client = get_client()
     start = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -76,42 +68,33 @@ def get_ticks(instrument_token: int,
 # =============================
 # 2️⃣ Helper: Aggregate to OHLCV candles (using ClickHouse views)
 # =============================
-def get_candles(instrument_token: int,
+def get_candles_1m(instrument_token: int,
                 start_time: datetime.datetime,
                 end_time: datetime.datetime,
                 interval: str = "1min") -> pd.DataFrame:
     """
-    Aggregate tick data into OHLCV candles from ClickHouse materialized views.
-    
+    Aggregate tick data into 1 min OHLCV candles from ClickHouse materialized views.
+
     Args:
         instrument_token: The instrument token to query
         start_time: Start of time range (datetime UTC)
         end_time: End of time range (datetime UTC)
-        interval: Candle interval - '1min' or '5min' (or use get_candles_custom for other intervals)
-    
+        interval: Candle interval - '1min'
     Returns:
         DataFrame with columns: bucket, instrument_token, open, high, low, close, volume
     """
 
     client = get_client()
 
-    # Select appropriate table based on interval
-    if interval == "1min":
-        table = "candles_1m"
-    elif interval == "5min":
-        table = "candles_5m"
-    else:
-        return pd.DataFrame()
-
     start = start_time.strftime("%Y-%m-%d %H:%M:%S")
     end = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
     query = f"""
         SELECT bucket, instrument_token, open, high, low, close, volume
-        FROM {table}
+        FROM candles_1m
         WHERE instrument_token = {instrument_token}
-        AND bucket >= toDateTime('{start}', 'UTC')
-        AND bucket <= toDateTime('{end}', 'UTC')
+         AND  bucket BETWEEN toDateTime64('{start}', 6, 'UTC')
+        AND toDateTime64('{end}', 6, 'UTC')
         ORDER BY bucket ASC
     """
     
@@ -124,6 +107,45 @@ def get_candles(instrument_token: int,
     
     return df
 
+
+def get_candles_5m(instrument_token: int,
+                   start_time: datetime.datetime,
+                   end_time: datetime.datetime,
+                   interval: str = "1min") -> pd.DataFrame:
+    """
+    Aggregate tick data into 5 min OHLCV candles from ClickHouse materialized views.
+
+    Args:
+        instrument_token: The instrument token to query
+        start_time: Start of time range (datetime UTC)
+        end_time: End of time range (datetime UTC)
+        interval: Candle interval - '5min'
+    Returns:
+        DataFrame with columns: bucket, instrument_token, open, high, low, close, volume
+    """
+
+    client = get_client()
+
+    start = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    end = end_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    query = f"""
+        SELECT bucket_5m, instrument_token, open, high, low, close, volume
+        FROM candles_5m
+        WHERE instrument_token = {instrument_token}
+         AND  bucket_5m BETWEEN toDateTime64('{start}', 6, 'UTC')
+        AND toDateTime64('{end}', 6, 'UTC')
+        ORDER BY bucket_5m ASC
+    """
+
+    result = client.query(query)
+    df = pd.DataFrame(result.result_rows, columns=result.column_names)
+
+    if not df.empty:
+        df['bucket_5m'] = pd.to_datetime(df['bucket_5m'])
+        df = df.sort_values('bucket_5m').reset_index(drop=True)
+
+    return df
 
 # =============================
 # 3️⃣ Helper: Get latest tick for instrument
@@ -208,19 +230,19 @@ if __name__ == "__main__":
     one_hour_ago = now - datetime.timedelta(days=2)
 
     # You'll need to replace with actual instrument token
-    instrument_token = 4353
+    instrument_token = 	5889
     
     print("Fetching tick data...")
     ticks = get_ticks(instrument_token, one_hour_ago, now, limit=1000)
     print(f"Retrieved {len(ticks)} ticks")
 
     print("\nFetching 1-minute candles...")
-    candles_1m = get_candles(instrument_token, one_hour_ago, now, interval="1min")
+    candles_1m = get_candles_1m(instrument_token, one_hour_ago, now, interval="1min")
     print(f"Retrieved {len(candles_1m)} candles")
     print(candles_1m.head())
     
     print("\nFetching 5-minute candles...")
-    candles_5m = get_candles(instrument_token,one_hour_ago, now,  interval="5min")
+    candles_5m = get_candles_5m(instrument_token,one_hour_ago, now,  interval="5min")
     print(f"Retrieved {len(candles_5m)} candles")
     print(candles_5m.head())
 

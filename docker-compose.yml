@@ -4,12 +4,14 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.7
     container_name: clickhouse
+    env_file:
+      - .env
     ports:
       - "8123:8123"
       - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./clickhouse/sql/clickhouse_init.sql:/docker-entrypoint-initdb.d/clickhouse_init.sql
+      - ./src/clickhouse/sql/clickhouse_init.sql:/docker-entrypoint-initdb.d/clickhouse_init.sql
     healthcheck:
       test: [ "CMD", "clickhouse-client", "--query", "SELECT 1" ]
       interval: 10s
@@ -21,6 +23,8 @@ services:
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
     container_name: redpanda
+    env_file:
+      - .env
     command:
       - redpanda start
       - --smp 1
@@ -46,6 +50,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     container_name: ingest
     depends_on:
       redpanda:
@@ -63,6 +69,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: snapshot
+    env_file:
+      - .env
     depends_on:
       redpanda:
         condition: service_healthy
@@ -81,6 +89,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: signal_generator
+    env_file:
+      - .env
     depends_on:
       redpanda:
         condition: service_healthy
@@ -94,7 +104,6 @@ services:
     volumes:
       - .:/app
     command: [ "python", "-m", "src.signal.signal_generator" ]
-
 
 
   redpanda-console:
@@ -117,3 +126,7 @@ services:
 
 volumes:
   clickhouse_data:
+
+networks:
+  app_net:
+    driver: bridge

@@ -22,7 +22,7 @@ def get_clickhouse_client():
     password = os.getenv("CLICKHOUSE_PASSWORD", "")
     database = os.getenv("CLICKHOUSE_DB", "zerodhadata")
 
-    print(f"🔌 Connecting to ClickHouse: {user}@{host}:{port}/{database}")
+    print(f"🔌 Connecting to ClickHouse:")
 
     client = clickhouse_connect.get_client(
         host=host,
